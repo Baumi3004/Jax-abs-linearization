@@ -18,7 +18,6 @@ def test_abslinear_maximum():
     x0 = jnp.zeros(4)
     ALF_fun = AbsLinearForm(fun, x0)
     y0, z0, a, b, Z, L = ALF_fun(x0)
-    
     assert y0 == pytest.approx(jnp.array(0.))
     assert z0 == pytest.approx(jnp.array([0., 0.]))
     assert a  == pytest.approx(jnp.array([0.5, 0.5, -0.5, -0.5]))

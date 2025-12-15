@@ -31,6 +31,8 @@ def test_abslinform_rosenbrock_nesterov():
     assert jnp.linalg.norm(L.flatten(), ord=1) == pytest.approx(6.)
 
 
+test_abslinform_rosenbrock_nesterov()
+
 # Hill funciton (see Kreimeier Diss Example 3.3)
 def relu(x):
     return 0.5*(x+jnp.abs(x))
