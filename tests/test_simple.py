@@ -5,7 +5,6 @@ sys.path.append(parent)
 from JaxAbsLinearization import AbsLinearForm
 import jax.numpy as jnp
 import jax
-
 import pytest
 # RN
 def rosenbrock_nesterov(x):

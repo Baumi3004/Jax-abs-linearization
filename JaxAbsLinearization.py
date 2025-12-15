@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jax import core
-from jax._src.core import ClosedJaxpr
+from jax._src.core import ClosedJaxpr, Literal
 from jax._src.lax.lax import add_p
 import math
 
@@ -37,12 +37,16 @@ class AbsLinearForm():
             x = xin.flatten()
         ders = self.obj_and_switching_jac( x, self.dummy_var)
         vals = self.obj_and_switching(x, self.dummy_var)  
-        a = ders[0][0]
-        b = ders[0][1]
-        Z = ders[1][0]
-        L = ders[1][1]
-        y = vals[0]
-        z = vals[1]
+        if self.dummy_var.size >= 1: 
+            a = ders[0][0]
+            b = ders[0][1]
+            Z = ders[1][0]
+            L = ders[1][1]
+            y = vals[0]
+            z = vals[1]
+        else: 
+            b, Z, L, z = None, None, None, None
+            y, a = vals, ders[0]
         return y, z, a, b, Z, L
 
     def modify_jaxpr(self):
@@ -68,20 +72,57 @@ class AbsLinearForm():
                 stop_eqn = core.new_jaxpr_eqn(invars=[invar], outvars=[stopvar], primitive=jax.lax.stop_gradient_p, params={}, effects=[])
                 new_eqns.append(stop_eqn)
                 #compute abs using additional variable
-                abs_eqn = core.new_jaxpr_eqn(invars=[stopvar], outvars=[absvar], primitive=eqn.primitive, params=dict(eqn.params), effects=[])
+                abs_eqn = core.new_jaxpr_eqn(invars=[stopvar], outvars=[absvar], primitive=jax.lax.abs_p, params=dict(eqn.params), effects=[])
                 new_eqns.append(abs_eqn)
                 # add dummy input to abs output to obtain same dependencies as abs variale (but you can differentiate wrt to this dummy)
                 # make sure the dummy variable is 0 when evaluating the derivative!!
-                add_eqn = core.new_jaxpr_eqn(invars=[absvar, dummy_invar], outvars=[outvar], primitive=add_p, params=dict(eqn.params), effects=[])
+                add_eqn = core.new_jaxpr_eqn(invars=[absvar, dummy_invar], outvars=[outvar], primitive=jax.lax.add_p, params=dict(eqn.params), effects=[])
                 new_eqns.append(add_eqn)
                 # register inputs of abses as outputs of the function (switching eq)
                 new_outvars.append(invar)
                 new_invars.append(dummy_invar)
+            elif eqn.primitive.name == 'max' or eqn.primitive.name == 'min':    
+                #change max or min(a,b) to 0.5(a+b +-|a-b|)
+                invars = eqn.invars
+                outvar = eqn.outvars[0] 
+                diffvar = gensym(outvar.aval)
+                stopvar = gensym(outvar.aval)
+                absvar = gensym(outvar.aval)
+                sumvar = gensym(outvar.aval)
+                combvar = gensym(outvar.aval)
+                dummy_invar = gensym(outvar.aval)
+                dummy_shapes.append(outvar.aval.shape)
+                dummy_outvar = gensym(outvar.aval)
+
+                # compute argument of abs 
+                diff_eqn = core.new_jaxpr_eqn(invars=invars, outvars=[diffvar], primitive=jax.lax.sub_p, params={}, effects=[])
+                new_eqns.append(diff_eqn)
+                # remove backwards depencency
+                stop_eqn = core.new_jaxpr_eqn(invars=[diffvar], outvars=[stopvar], primitive=jax.lax.stop_gradient_p, params={}, effects=[])
+                new_eqns.append(stop_eqn)
+                # compute abs
+                abs_eqn = core.new_jaxpr_eqn(invars=[stopvar], outvars=[absvar], primitive=jax.lax.abs_p, params={}, effects=[])
+                new_eqns.append(abs_eqn)
+                # add depenecy to output of abs
+                add_eqn = core.new_jaxpr_eqn(invars=[absvar, dummy_invar], outvars=[dummy_outvar], primitive=jax.lax.add_p, params={}, effects=[])
+                new_eqns.append(add_eqn)
+                # compute a+b
+                sum_eqn = core.new_jaxpr_eqn(invars=invars, outvars=[sumvar], primitive=jax.lax.add_p, params={}, effects=[])
+                new_eqns.append(sum_eqn)
+                # compute + or - depeneding on max or min
+                combprim = jax.lax.add_p if eqn.primitive.name == 'max' else jax.lax.sub_p
+                comb_eqn = core.new_jaxpr_eqn(invars=[sumvar, dummy_outvar], outvars=[combvar], primitive=combprim, params={}, effects=[])
+                new_eqns.append(comb_eqn)
+                #scale by 0.5
+                scale_eqn = core.new_jaxpr_eqn(invars=[combvar, Literal(0.5, aval=combvar.aval)], outvars=[outvar], primitive=jax.lax.mul_p, params={}, effects=[])
+                new_eqns.append(scale_eqn)
+                #
+                new_outvars.append(diffvar)
+                new_invars.append(dummy_invar)
             else:
                 new_eqns.append(eqn)
             
-        
-            JaxprClass = type(jaxpr)              
+            JaxprClass = type(jaxpr)             
             new_jaxpr = JaxprClass(invars=new_invars, outvars=new_outvars, constvars=jaxpr.constvars, eqns=new_eqns)
 
         return ClosedJaxpr(new_jaxpr, consts), dummy_shapes
@@ -95,7 +136,10 @@ def split_by_shapes(big, shapes):
     return out
 
 def concat_except_first(input):
-    return input[0],jnp.concatenate([jnp.atleast_1d(jnp.ravel(var)) for var in input[1:]])
+    if len(input) > 1:
+        return input[0],jnp.concatenate([jnp.atleast_1d(jnp.ravel(var)) for var in input[1:]])
+    return input[0]
+
 
 
 def flatten_and_concat(xs):
