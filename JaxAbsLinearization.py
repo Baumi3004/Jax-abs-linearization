@@ -64,6 +64,8 @@ class AbsLinearForm():
                 i = replace_abs(new_eqns, i, new_invars, new_outvars, dummy_shapes)
             if new_eqns[i].primitive.name == 'max' or new_eqns[i].primitive.name == 'min':
                 i = replace_maxmin(new_eqns, i)
+            #if new_eqns[i].primitive.name == 'reduce_max' or new_eqns[i].primitive.name == "reduce_min": 
+            #   i = replace_maxmin_red(new_eqns, i)
             i += 1
         JaxprClass = type(jaxpr)             
         new_jaxpr = JaxprClass(invars=new_invars, outvars=new_outvars, constvars=jaxpr.constvars, eqns=new_eqns)
@@ -149,3 +151,15 @@ def replace_maxmin(eqns, i):
     eqns.insert(i+4,scale_eqn)
        
     return i
+
+
+def replace_maxmin_red(eqns, i):
+    gensym = core.gensym()
+    eqn = eqns[i]
+    primname = eqn.primitive.name
+    assert primname == 'reduce_max' or primname == 'reduce_min'
+    #del eqns[i]
+    num_epements = math.prod([eqn.invars[0].aval.shape[ax] for ax in eqn.params['axes']])
+    from IPython import embed; embed()
+    return i
+    
